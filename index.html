@@ -64,19 +64,6 @@ button.copied { color: #1a7f37; border-color: #1a7f37; }
 	scrollbar-width: none;
 }
 .heatmap-wrap::-webkit-scrollbar { display: none; }
-.legend {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	margin-top: 12px;
-	font-size: 12px;
-	color: #656d76;
-}
-.legend-cell {
-	width: 11px;
-	height: 11px;
-	border-radius: 2px;
-}
 .actions { margin-top: 16px; }
 #tooltip {
 	position: fixed;
@@ -108,7 +95,6 @@ button.copied { color: #1a7f37; border-color: #1a7f37; }
 	</section>
 	<section class="heatmap-view hidden" id="heatmap-view">
 		<div class="heatmap-wrap" id="heatmap-container"></div>
-		<div class="legend" id="legend"></div>
 		<div class="actions">
 			<button id="copy-btn">Copy Image</button>
 		</div>
@@ -196,7 +182,7 @@ button.copied { color: #1a7f37; border-color: #1a7f37; }
 			const ds = dateToStr(d);
 			const count = data.get(ds) || 0;
 			const level = getLevel(count, thresholds);
-			const dayOfYear = Math.floor((d - jan1) / 86400000);
+			const dayOfYear = Math.round((d - jan1) / 86400000);
 			const col = Math.floor((dayOfYear + startDow) / 7);
 			const row = d.getDay();
 			const month = d.getMonth();
@@ -246,15 +232,7 @@ button.copied { color: #1a7f37; border-color: #1a7f37; }
 		return svg;
 	}
 
-	function renderLegend() {
-		const legend = document.getElementById("legend");
-		let html = `<span>Less</span>`;
-		for (let i = 0; i < COLORS.length; i++) {
-			html += `<span class="legend-cell" style="background:${COLORS[i]}"></span>`;
-		}
-		html += `<span>More</span>`;
-		legend.innerHTML = html;
-	}
+	function renderLegend() {}
 
 	function setupTooltip() {
 		const tooltip = document.getElementById("tooltip");
