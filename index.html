@@ -191,24 +191,34 @@ button.copied { color: #1a7f37; border-color: #1a7f37; }
 			d.setDate(d.getDate() + 1);
 		}
 
+		// Sum total drinks
+		let totalDrinks = 0;
+		for (const v of data.values()) totalDrinks += v;
+
+		const TITLE_HEIGHT = 28;
 		const totalCols = cells.length > 0 ? cells[cells.length - 1].col + 1 : 1;
 		const step = CELL_SIZE + CELL_GAP;
 		const gridW = totalCols * step - CELL_GAP;
 		const gridH = 7 * step - CELL_GAP;
 		const svgW = PADDING + LABEL_WIDTH + gridW + PADDING;
-		const svgH = PADDING + MONTH_LABEL_HEIGHT + gridH + PADDING;
+		const svgH = PADDING + TITLE_HEIGHT + MONTH_LABEL_HEIGHT + gridH + PADDING;
 		const ox = PADDING + LABEL_WIDTH;
-		const oy = PADDING + MONTH_LABEL_HEIGHT;
+		const oy = PADDING + TITLE_HEIGHT + MONTH_LABEL_HEIGHT;
 
 		let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">`;
-		svg += `<g text-anchor="start" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="10" fill="#656d76">`;
+
+		// Title
+		const drinkWord = totalDrinks === 1 ? "drink" : "drinks";
+		svg += `<text x="${PADDING}" y="${PADDING + 16}" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14" fill="#1f2328">${totalDrinks} ${drinkWord} this year</text>`;
+
+		svg += `<g text-anchor="start" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="10" fill="#1f2328">`;
 
 		// Month labels
 		let prevLabelCol = -Infinity;
 		for (const [month, col] of monthStarts) {
 			if (col - prevLabelCol < 3 && prevLabelCol >= 0) continue;
 			const x = ox + col * step;
-			svg += `<text x="${x}" y="${PADDING + 10}">${MONTHS[month]}</text>`;
+			svg += `<text x="${x}" y="${PADDING + TITLE_HEIGHT + 10}">${MONTHS[month]}</text>`;
 			prevLabelCol = col;
 		}
 
