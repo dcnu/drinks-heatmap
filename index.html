@@ -294,48 +294,49 @@ button.copied { color: #1a7f37; border-color: #1a7f37; }
 		setupTooltip();
 	}
 
-	function copyImage() {
-		const svg = document.querySelector("#heatmap-container svg");
-		if (!svg) return;
+	function svgToBlob() {
+		var svg = document.querySelector("#heatmap-container svg");
+		var clone = svg.cloneNode(true);
+		var w = parseFloat(svg.getAttribute("width"));
+		var h = parseFloat(svg.getAttribute("height"));
 
-		const clone = svg.cloneNode(true);
-		const w = parseFloat(svg.getAttribute("width"));
-		const h = parseFloat(svg.getAttribute("height"));
-
-		const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+		var bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
 		bg.setAttribute("width", w);
 		bg.setAttribute("height", h);
 		bg.setAttribute("fill", "#ffffff");
 		clone.insertBefore(bg, clone.firstChild);
 
-		const serializer = new XMLSerializer();
-		const svgStr = serializer.serializeToString(clone);
-		const encoded = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgStr)));
+		var svgStr = new XMLSerializer().serializeToString(clone);
+		var encoded = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgStr)));
 
-		const canvas = document.createElement("canvas");
+		var canvas = document.createElement("canvas");
 		canvas.width = w * 2;
 		canvas.height = h * 2;
-		const ctx = canvas.getContext("2d");
+		var ctx = canvas.getContext("2d");
 		ctx.scale(2, 2);
 
-		const img = new Image();
-		img.onload = function () {
-			ctx.drawImage(img, 0, 0);
-			canvas.toBlob(function (blob) {
-				if (navigator.clipboard && navigator.clipboard.write) {
-					navigator.clipboard.write([
-						new ClipboardItem({ "image/png": blob })
-					]).then(function () {
-						showCopied();
-					}).catch(function () {
-						downloadBlob(blob);
-					});
-				} else {
-					downloadBlob(blob);
-				}
-			}, "image/png");
-		};
-		img.src = encoded;
+		return new Promise(function (resolve) {
+			var img = new Image();
+			img.onload = function () {
+				ctx.drawImage(img, 0, 0);
+				canvas.toBlob(function (blob) { resolve(blob); }, "image/png");
+			};
+			img.src = encoded;
+		});
+	}
+
+	function copyImage() {
+		if (!document.querySelector("#heatmap-container svg")) return;
+
+		if (navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== "undefined") {
+			// Create ClipboardItem synchronously to preserve user activation on iOS Safari
+			var item = new ClipboardItem({ "image/png": svgToBlob() });
+			navigator.clipboard.write([item]).then(showCopied).catch(function () {
+				svgToBlob().then(downloadBlob);
+			});
+		} else {
+			svgToBlob().then(downloadBlob);
+		}
 	}
 
 	function downloadBlob(blob) {
