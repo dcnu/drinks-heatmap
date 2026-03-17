@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drinks Heatmap Tracker</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+	background: #ffffff;
+	color: #1f2328;
+	line-height: 1.5;
+	padding: 32px 16px;
+}
+main {
+	max-width: 960px;
+	margin: 0 auto;
+}
+h1 {
+	font-size: 20px;
+	font-weight: 600;
+	margin-bottom: 24px;
+}
+.hidden { display: none; }
+textarea {
+	width: 100%;
+	max-width: 480px;
+	height: 200px;
+	font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+	font-size: 13px;
+	padding: 12px;
+	border: 1px solid #d0d7de;
+	border-radius: 6px;
+	resize: vertical;
+	color: #1f2328;
+	background: #ffffff;
+	tab-size: 4;
+}
+textarea:focus { outline: 2px solid #0969da; outline-offset: -1px; border-color: transparent; }
+button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 16px;
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 20px;
+	border: 1px solid #d0d7de;
+	border-radius: 6px;
+	background: #f6f8fa;
+	color: #1f2328;
+	cursor: pointer;
+	user-select: none;
+}
+button:hover { background: #eef1f4; }
+button:active { background: #e4e8ec; }
+button.copied { color: #1a7f37; border-color: #1a7f37; }
+.input-view p { color: #656d76; font-size: 14px; margin-bottom: 8px; }
+.input-view button { margin-top: 12px; }
+.heatmap-wrap {
+	overflow-x: auto;
+	padding-bottom: 4px;
+	scrollbar-width: none;
+}
+.heatmap-wrap::-webkit-scrollbar { display: none; }
+.legend {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: 12px;
+	font-size: 12px;
+	color: #656d76;
+}
+.legend-cell {
+	width: 11px;
+	height: 11px;
+	border-radius: 2px;
+}
+.actions { margin-top: 16px; }
+#tooltip {
+	position: fixed;
+	padding: 6px 10px;
+	font-size: 12px;
+	line-height: 1.4;
+	color: #ffffff;
+	background: #1f2328;
+	border-radius: 6px;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.15s;
+	white-space: nowrap;
+	z-index: 10;
+}
+#tooltip.visible { opacity: 1; }
+</style>
+</head>
+<body>
+<main id="app">
+	<header>
+		<h1>Drinks Heatmap</h1>
+	</header>
+	<section class="input-view" id="input-view">
+		<p>Paste CSV data (date,count per line) or use the sample below.</p>
+		<textarea id="csv-input"></textarea>
+		<br>
+		<button id="render-btn">Render</button>
+	</section>
+	<section class="heatmap-view hidden" id="heatmap-view">
+		<div class="heatmap-wrap" id="heatmap-container"></div>
+		<div class="legend" id="legend"></div>
+		<div class="actions">
+			<button id="copy-btn">Copy Image</button>
+		</div>
+	</section>
+</main>
+<div id="tooltip"></div>
+<script>
+(function () {
+	"use strict";
+
+	const CELL_SIZE = 11;
+	const CELL_GAP = 3;
+	const CELL_RADIUS = 2;
+	const LABEL_WIDTH = 36;
+	const MONTH_LABEL_HEIGHT = 16;
+	const PADDING = 16;
+	const COLORS = ["#ebedf0", "#9be9a8", "#40c463", "#30a14e", "#216e39"];
+	const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+	const DAY_LABELS = [null, "Mon", null, "Wed", null, "Fri", null]; // Sun=0
+
+	function parseCSV(text) {
+		const data = new Map();
+		const lines = text.trim().split(/\r?\n/);
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+			const parts = trimmed.split(",");
+			if (parts.length < 2) continue;
+			const dateStr = parts[0].trim();
+			const count = parseInt(parts[1].trim(), 10);
+			if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || isNaN(count)) continue;
+			data.set(dateStr, (data.get(dateStr) || 0) + count);
+		}
+		return data;
+	}
+
+	function computeThresholds(data) {
+		const nonZero = [];
+		for (const v of data.values()) {
+			if (v > 0) nonZero.push(v);
+		}
+		if (nonZero.length === 0) return [0, 0, 0, 0];
+		nonZero.sort((a, b) => a - b);
+		const q = (p) => {
+			const i = (nonZero.length - 1) * p;
+			const lo = Math.floor(i);
+			const hi = Math.ceil(i);
+			if (lo === hi) return nonZero[lo];
+			return nonZero[lo] + (nonZero[hi] - nonZero[lo]) * (i - lo);
+		};
+		const q1 = q(0.25), q2 = q(0.5), q3 = q(0.75);
+		if (q1 === q3) return [q1, q1, q1, q1];
+		return [q1, q2, q3];
+	}
+
+	function getLevel(count, thresholds) {
+		if (count <= 0) return 0;
+		if (thresholds[0] === thresholds[2]) return 4;
+		if (count <= thresholds[0]) return 1;
+		if (count <= thresholds[1]) return 2;
+		if (count <= thresholds[2]) return 3;
+		return 4;
+	}
+
+	function dateToStr(d) {
+		const y = d.getFullYear();
+		const m = String(d.getMonth() + 1).padStart(2, "0");
+		const day = String(d.getDate()).padStart(2, "0");
+		return `${y}-${m}-${day}`;
+	}
+
+	function buildSVG(data) {
+		const now = new Date();
+		const year = now.getFullYear();
+		const jan1 = new Date(year, 0, 1);
+		const today = new Date(year, now.getMonth(), now.getDate());
+		const startDow = jan1.getDay();
+		const thresholds = computeThresholds(data);
+
+		// Collect cells
+		const cells = [];
+		const monthStarts = new Map();
+		const d = new Date(jan1);
+		while (d <= today) {
+			const ds = dateToStr(d);
+			const count = data.get(ds) || 0;
+			const level = getLevel(count, thresholds);
+			const dayOfYear = Math.floor((d - jan1) / 86400000);
+			const col = Math.floor((dayOfYear + startDow) / 7);
+			const row = d.getDay();
+			const month = d.getMonth();
+			if (!monthStarts.has(month)) monthStarts.set(month, col);
+			cells.push({ ds, count, level, col, row });
+			d.setDate(d.getDate() + 1);
+		}
+
+		const totalCols = cells.length > 0 ? cells[cells.length - 1].col + 1 : 1;
+		const step = CELL_SIZE + CELL_GAP;
+		const gridW = totalCols * step - CELL_GAP;
+		const gridH = 7 * step - CELL_GAP;
+		const svgW = PADDING + LABEL_WIDTH + gridW + PADDING;
+		const svgH = PADDING + MONTH_LABEL_HEIGHT + gridH + PADDING;
+		const ox = PADDING + LABEL_WIDTH;
+		const oy = PADDING + MONTH_LABEL_HEIGHT;
+
+		let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">`;
+		svg += `<g text-anchor="start" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="10" fill="#656d76">`;
+
+		// Month labels
+		let prevLabelCol = -Infinity;
+		for (const [month, col] of monthStarts) {
+			if (col - prevLabelCol < 3 && prevLabelCol >= 0) continue;
+			const x = ox + col * step;
+			svg += `<text x="${x}" y="${PADDING + 10}">${MONTHS[month]}</text>`;
+			prevLabelCol = col;
+		}
+
+		// Day-of-week labels
+		for (let row = 0; row < 7; row++) {
+			if (!DAY_LABELS[row]) continue;
+			const y = oy + row * step + CELL_SIZE - 1;
+			svg += `<text x="${PADDING}" y="${y}">${DAY_LABELS[row]}</text>`;
+		}
+
+		svg += `</g>`;
+
+		// Cells
+		for (const c of cells) {
+			const x = ox + c.col * step;
+			const y = oy + c.row * step;
+			svg += `<rect x="${x}" y="${y}" width="${CELL_SIZE}" height="${CELL_SIZE}" rx="${CELL_RADIUS}" ry="${CELL_RADIUS}" fill="${COLORS[c.level]}" data-date="${c.ds}" data-count="${c.count}"/>`;
+		}
+
+		svg += `</svg>`;
+		return svg;
+	}
+
+	function renderLegend() {
+		const legend = document.getElementById("legend");
+		let html = `<span>Less</span>`;
+		for (let i = 0; i < COLORS.length; i++) {
+			html += `<span class="legend-cell" style="background:${COLORS[i]}"></span>`;
+		}
+		html += `<span>More</span>`;
+		legend.innerHTML = html;
+	}
+
+	function setupTooltip() {
+		const tooltip = document.getElementById("tooltip");
+		const container = document.getElementById("heatmap-container");
+
+		container.addEventListener("mouseover", function (e) {
+			const rect = e.target.closest("rect[data-date]");
+			if (!rect) return;
+			const date = rect.getAttribute("data-date");
+			const count = rect.getAttribute("data-count");
+			const label = count === "1" ? "drink" : "drinks";
+			tooltip.textContent = `${count} ${label} on ${date}`;
+			tooltip.classList.add("visible");
+		});
+
+		container.addEventListener("mousemove", function (e) {
+			if (!tooltip.classList.contains("visible")) return;
+			const x = e.clientX;
+			const y = e.clientY;
+			tooltip.style.left = x + 12 + "px";
+			tooltip.style.top = y - 32 + "px";
+		});
+
+		container.addEventListener("mouseout", function (e) {
+			if (e.target.closest("rect[data-date]")) {
+				tooltip.classList.remove("visible");
+			}
+		});
+	}
+
+	function renderHeatmap(data) {
+		document.getElementById("input-view").classList.add("hidden");
+		document.getElementById("heatmap-view").classList.remove("hidden");
+		const container = document.getElementById("heatmap-container");
+		container.innerHTML = buildSVG(data);
+		renderLegend();
+		setupTooltip();
+	}
+
+	function copyImage() {
+		const svg = document.querySelector("#heatmap-container svg");
+		if (!svg) return;
+
+		const clone = svg.cloneNode(true);
+		const w = parseFloat(svg.getAttribute("width"));
+		const h = parseFloat(svg.getAttribute("height"));
+
+		const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+		bg.setAttribute("width", w);
+		bg.setAttribute("height", h);
+		bg.setAttribute("fill", "#ffffff");
+		clone.insertBefore(bg, clone.firstChild);
+
+		const serializer = new XMLSerializer();
+		const svgStr = serializer.serializeToString(clone);
+		const encoded = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgStr)));
+
+		const canvas = document.createElement("canvas");
+		canvas.width = w * 2;
+		canvas.height = h * 2;
+		const ctx = canvas.getContext("2d");
+		ctx.scale(2, 2);
+
+		const img = new Image();
+		img.onload = function () {
+			ctx.drawImage(img, 0, 0);
+			canvas.toBlob(function (blob) {
+				if (navigator.clipboard && navigator.clipboard.write) {
+					navigator.clipboard.write([
+						new ClipboardItem({ "image/png": blob })
+					]).then(function () {
+						showCopied();
+					}).catch(function () {
+						downloadBlob(blob);
+					});
+				} else {
+					downloadBlob(blob);
+				}
+			}, "image/png");
+		};
+		img.src = encoded;
+	}
+
+	function downloadBlob(blob) {
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = "drinks-heatmap.png";
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+	}
+
+	function showCopied() {
+		const btn = document.getElementById("copy-btn");
+		btn.textContent = "Copied";
+		btn.classList.add("copied");
+		setTimeout(function () {
+			btn.textContent = "Copy Image";
+			btn.classList.remove("copied");
+		}, 1500);
+	}
+
+	function generateSampleCSV() {
+		const now = new Date();
+		const year = now.getFullYear();
+		const lines = [];
+		const sampleDates = [
+			[0, 5], [0, 12], [0, 18], [0, 25],
+			[1, 2], [1, 8], [1, 14], [1, 22],
+			[2, 1], [2, 7], [2, 14]
+		];
+		for (const [m, d] of sampleDates) {
+			const date = new Date(year, m, d);
+			if (date > now) break;
+			const count = 1 + Math.floor(Math.random() * 4);
+			lines.push(`${dateToStr(date)},${count}`);
+		}
+		return lines.join("\n");
+	}
+
+	function showInputView() {
+		document.getElementById("heatmap-view").classList.add("hidden");
+		document.getElementById("input-view").classList.remove("hidden");
+		const textarea = document.getElementById("csv-input");
+		if (!textarea.value) textarea.value = generateSampleCSV();
+	}
+
+	function init() {
+		const hash = decodeURIComponent(window.location.hash.slice(1));
+		if (hash.trim()) {
+			const data = parseCSV(hash);
+			if (data.size > 0) {
+				renderHeatmap(data);
+				return;
+			}
+		}
+		showInputView();
+	}
+
+	document.getElementById("render-btn").addEventListener("click", function () {
+		const text = document.getElementById("csv-input").value.trim();
+		if (!text) return;
+		window.location.hash = encodeURIComponent(text);
+	});
+
+	document.getElementById("copy-btn").addEventListener("click", copyImage);
+
+	window.addEventListener("hashchange", init);
+
+	init();
+})();
+</script>
+</body>
+</html>
